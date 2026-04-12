@@ -67,9 +67,20 @@ pub fn main() !void {
     }
 
     var reader = src_file_handle.reader(&.{});
-    var src_code = std.Io.Writer.Allocating.init(gpa);
-    defer src_code.deinit();
+    var writer = std.Io.Writer.Allocating.init(gpa);
 
-    _ = try reader.interface.streamRemaining(&src_code.writer);
+    _ = try reader.interface.streamRemaining(&writer.writer);
+
+    const src_code = try writer.toOwnedSliceSentinel(0);
+    writer.deinit();
+
+    // This has to be a var as .deinit() mutates the fields.
+    var ast = try std.zig.Ast.parse(gpa, src_code, .zig);
+    defer ast.deinit(gpa);
+
+    for (ast.nodes.items(.tag)) |value| {
+        try stdout.print("{}\n", .{value});
+    }
+
     std.process.exit(0);
 }
