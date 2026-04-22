@@ -228,12 +228,19 @@ fn getAllVariables(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Nod
     return ret.items;
 }
 
-fn printSlice(comptime T: type, writer: *std.Io.Writer, slice: []T) !void {
+fn printSlice(comptime T: type, slice: []T, writer: *std.Io.Writer) !void {
     try writer.print("[", .{});
     for (0..slice.len - 1) |i| {
-        try writer.print("'{s}', ", .{slice[i]});
+        if (T == []const u8) {
+            try writer.print("'{s}', ", .{slice[i]});
+        }
+        try writer.print("'{any}', ", .{slice[i]});
     }
-    try writer.print("'{s}']\n", .{slice[slice.len - 1]});
+    if (T == []const u8) {
+        try writer.print("'{s}']\n", .{slice[slice.len - 1]});
+    } else {
+        try writer.print("'{any}']\n", .{slice[slice.len - 1]});
+    }
     try writer.flush();
 }
 
@@ -296,11 +303,12 @@ pub fn main(init: std.process.Init) !void {
     var ast = try std.zig.Ast.parse(gpa, src_code, .zig);
     defer ast.deinit(gpa);
 
-    for (try getAllFunctions(ast, gpa)) |i| {
+    for (try getAllFunctionsWithAlloc(ast, gpa)) |i| {
         const returns = try getReturn(ast, i, gpa);
         std.debug.print("{s}: ", .{getFunctionName(ast, i)});
-        try printSlice([]const u8, stdout, returns);
+        try printSlice([]const u8, returns, stdout);
     }
+    try printSlice(std.zig.Ast.Node.Index, try getAllFunctions(ast, gpa), stdout);
 
     try stdout.flush();
 
