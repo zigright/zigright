@@ -5,12 +5,6 @@ const alloc = std.mem.Allocator;
 
 var progname: []const u8 = undefined;
 
-fn foo(gpa1: std.mem.Allocator, gpa2: std.mem.Allocator) void {
-    _ = gpa1;
-    _ = gpa2;
-    return;
-}
-
 fn help(writer: *std.Io.Writer) !void {
     try writer.print(
         \\Usage: {s} [FILE|-h]
@@ -132,6 +126,95 @@ fn getAllFunctionsWithAlloc(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zi
     return ret.items;
 }
 
+fn getReturnExpr(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
+    const returnNode = tree.nodes.get(@intFromEnum(nodeIndex));
+    const returnExprIndex = returnNode.data.opt_node.unwrap();
+    if (returnExprIndex != null) {
+        const returnExprNode = tree.nodes.get(@intFromEnum(returnExprIndex.?));
+        const startTokenIndex = tree.firstToken(returnExprIndex.?);
+        const lastTokenIndex = tree.lastToken(returnExprIndex.?);
+        return spanToSlice(tree, tree.tokensToSpan(startTokenIndex, lastTokenIndex, returnExprNode.main_token));
+    }
+    return "void";
+}
+
+fn getReturn(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) ![][]const u8 {
+    var ret: std.ArrayList([]const u8) = .empty;
+    const funcBodyIndex = tree.nodeData(nodeIndex).node_and_node.@"1";
+    var stack: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
+    defer stack.deinit(gpa);
+    try stack.append(gpa, funcBodyIndex);
+
+    while (stack.items.len > 0) {
+        const curr = stack.pop().?;
+        const currNode = tree.nodes.get(@intFromEnum(curr));
+        switch (currNode.tag) {
+            .block_two, .block_two_semicolon => {
+                const lindex = currNode.data.opt_node_and_opt_node.@"0".unwrap();
+                const rindex = currNode.data.opt_node_and_opt_node.@"1".unwrap();
+                if (lindex != null) {
+                    try stack.append(gpa, lindex.?);
+                }
+                if (rindex != null) {
+                    try stack.append(gpa, rindex.?);
+                }
+            },
+            .block, .block_semicolon => {
+                for (tree.extraDataSlice(currNode.data.extra_range, std.zig.Ast.Node.Index)) |index| {
+                    try stack.append(gpa, index);
+                }
+            },
+            .@"if" => {
+                const if_data = tree.ifFull(curr);
+                try stack.append(gpa, if_data.ast.then_expr);
+                if (if_data.ast.else_expr.unwrap()) |val| {
+                    try stack.append(gpa, val);
+                }
+            },
+            .if_simple => {
+                const if_data = tree.ifSimple(curr);
+                try stack.append(gpa, if_data.ast.then_expr);
+                if (if_data.ast.else_expr.unwrap()) |val| {
+                    try stack.append(gpa, val);
+                }
+            },
+            .@"switch", .switch_comma => {
+                const switch_data = tree.fullSwitch(curr).?;
+                for (switch_data.ast.cases) |case| {
+                    try stack.append(gpa, case);
+                }
+            },
+            .switch_case_one,
+            .switch_case_inline_one,
+            .switch_case,
+            .switch_case_inline,
+            => {
+                const switch_case = tree.fullSwitchCase(curr).?;
+                try stack.append(gpa, switch_case.ast.target_expr);
+            },
+            .@"return" => {
+                try ret.append(gpa, getReturnExpr(tree, curr));
+            },
+            .while_simple,
+            .while_cont,
+            .@"while",
+            => {
+                const while_data = tree.fullWhile(curr).?;
+                try stack.append(gpa, while_data.ast.then_expr);
+            },
+            .for_simple, .@"for" => {
+                const for_data = tree.fullFor(curr).?;
+                try stack.append(gpa, for_data.ast.then_expr);
+            },
+            else => {},
+        }
+    }
+    if (ret.items.len == 0) {
+        try ret.append(gpa, "void");
+    }
+    return ret.items;
+}
+
 fn getAllVariables(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
     var ret: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
     for (0..tree.nodes.len) |index| {
@@ -143,6 +226,15 @@ fn getAllVariables(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Nod
         }
     }
     return ret.items;
+}
+
+fn printSlice(comptime T: type, writer: *std.Io.Writer, slice: []T) !void {
+    try writer.print("[", .{});
+    for (0..slice.len - 1) |i| {
+        try writer.print("'{s}', ", .{slice[i]});
+    }
+    try writer.print("'{s}']\n", .{slice[slice.len - 1]});
+    try writer.flush();
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -204,14 +296,12 @@ pub fn main(init: std.process.Init) !void {
     var ast = try std.zig.Ast.parse(gpa, src_code, .zig);
     defer ast.deinit(gpa);
 
-    for (try getAllFunctionsWithAlloc(ast, gpa)) |i| {
-        try stdout.print("{s}\n", .{getFunctionName(ast, i)});
-        const map = try getFunctionArgsWithType(ast, i, gpa);
-        var iter = map.keyIterator();
-        while (iter.next()) |value| {
-            try stdout.print("\t{d}: {s}\n", .{ value.*, map.get(value.*).? });
-        }
+    for (try getAllFunctions(ast, gpa)) |i| {
+        const returns = try getReturn(ast, i, gpa);
+        std.debug.print("{s}: ", .{getFunctionName(ast, i)});
+        try printSlice([]const u8, stdout, returns);
     }
+
     try stdout.flush();
 
     std.process.exit(0);
