@@ -1,0 +1,40 @@
+source: Map(Set(TaggedUnion))
+sink: Map(Set(TaggedUnion))
+
+# Rules:
+source[var]("var = undefined") = Uninit
+source[var]("var = gpa.alloc(...)") = Alloc(gpa)
+source[var]("var = f(gpa)") = {depends on annotations}
+source[var]("var = opaque(gpa)") = Maybe(gpa)
+
+sink[var] defaults to Uninit
+sink[var]("var = gpa.alloc(...)") = Uninit
+sink[var]("gpa.free(var)") = Dealloc(gpa)
+sink[var]("var.deinit()") = Dealloc(source[var])
+sink[var]("var.deinit(gpa)") = Dealloc(gpa)
+sink[var]("f(var, gpa)") = {depends on annotations}
+sink[var]("opaque(var, gpa)") = Maybe(gpa)
+
+# Combinations:
+Node1 and Node2:
+    source[var] = source1[var] | source2[var]
+    sink[var] = sink1[var] | sink2[var]
+
+# Annotations:
+Recursively apply these rules, figure out what changes a function should have
+
+# Errors:
+setting source[var] when source[var] only contains Alloc(...) and sink[var] only contains Uninit
+    ==> Memory leak (dropped pointer when it is definitely allocated and definitely not freed)
+
+sink[var] is only Uninit at end of program but source[var] only contains Alloc(...)
+    ==> Memory leak (definitely allocated, definitely not freed)
+
+setting sink[var] when sink[var] only contains Dealloc(...)
+    ==> Double free (definitely freed, freeing again)
+
+setting sink[var] = gpa when source[var] doesn't contain Alloc(gpa) or Maybe(gpa)
+    ==> Cross free
+
+accessing var when sink[var] only contains Dealloc(...)
+    ==> Use after free
