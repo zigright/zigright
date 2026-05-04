@@ -309,7 +309,7 @@ pub fn main(init: std.process.Init) !void {
     var ast = try std.zig.Ast.parse(gpa, src_code, .zig);
     defer ast.deinit(gpa);
 
-    for (try getfun(ast, gpa)) |i| {
+    for (try getAllFunctionsWithAlloc(ast, gpa)) |i| {
         const params = try getFunctionParamsWithType(ast, i, gpa);
         var iter = params.iterator();
         std.debug.print("{s}:\n", .{getFunctionName(ast, i)});
@@ -320,29 +320,4 @@ pub fn main(init: std.process.Init) !void {
     try stdout.flush();
 
     std.process.exit(0);
-}
-
-pub fn branched_alloc(gpa1: std.mem.Allocator, gpa2: std.mem.Allocator, a: bool) !void {
-    var arr: [5]u8 = undefined;
-    if (a) {
-        arr = gpa1.alloc(u8, 5);
-    } else {
-        arr = gpa2.alloc(u8, 5);
-    }
-    // State here?
-}
-
-pub fn branched_alloc2(gpa1: std.mem.Allocator, gpa2: std.mem.Allocator, a: bool) !void {
-    var arr: [5]u8 = undefined;
-    if (a) {
-        arr = gpa1.alloc(u8, 5);
-    }
-    if (!a) {
-        arr = gpa2.alloc(u8, 5);
-    }
-}
-
-pub fn something_and_free(thing: []u8, alloc: std.mem.Allocator) void {
-    defer alloc.free(thing);
-    // And do something interesting, maybe.
 }
