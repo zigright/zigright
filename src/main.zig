@@ -90,20 +90,21 @@ fn getAllFunctions(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Nod
     return ret.items;
 }
 
-fn getFunctionArgsWithType(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) !std.AutoHashMap(u16, []const u8) {
-    var map: std.AutoHashMap(u16, []const u8) = .init(gpa);
+fn getFunctionParamsWithType(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) !std.StringHashMap([]const u8) {
+    var map: std.StringHashMap([]const u8) = .init(gpa);
     var buffer: [1]std.zig.Ast.Node.Index = undefined;
     const funcProto = tree.fullFnProto(&buffer, nodeIndex).?;
     var iter = funcProto.iterate(&tree);
-    var index: u16 = 0;
     while (iter.next()) |j| {
         const startTokenIndex = tree.firstToken(j.type_expr.?);
         const lastTokenIndex = tree.lastToken(j.type_expr.?);
-        try map.put(index, spanToSlice(tree, tree.tokensToSpan(startTokenIndex, lastTokenIndex, @intFromEnum(j.type_expr.?))));
-        index += 1;
+        try map.put(tree.tokenSlice(j.name_token.?), spanToSlice(tree, tree.tokensToSpan(startTokenIndex, lastTokenIndex, @intFromEnum(j.type_expr.?))));
     }
     return map;
 }
+
+// fn takesAllocator(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) bool {
+// }
 
 fn getAllFunctionsWithAlloc(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
     const functionIndices = try getAllFunctions(tree, gpa);
@@ -228,6 +229,11 @@ fn getAllVariables(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Nod
     return ret.items;
 }
 
+fn getFunctionBlockIndex(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) std.zig.Ast.Node.Index {
+    assert(tree.nodeTag(nodeIndex) == .fn_decl);
+    return tree.nodes.get(@intFromEnum(nodeIndex)).data.node_and_node.@"1";
+}
+
 fn printSlice(comptime T: type, slice: []T, writer: *std.Io.Writer) !void {
     try writer.print("[", .{});
     for (0..slice.len - 1) |i| {
@@ -303,13 +309,14 @@ pub fn main(init: std.process.Init) !void {
     var ast = try std.zig.Ast.parse(gpa, src_code, .zig);
     defer ast.deinit(gpa);
 
-    for (try getAllFunctionsWithAlloc(ast, gpa)) |i| {
-        const returns = try getReturn(ast, i, gpa);
-        std.debug.print("{s}: ", .{getFunctionName(ast, i)});
-        try printSlice([]const u8, returns, stdout);
+    for (try getfun(ast, gpa)) |i| {
+        const params = try getFunctionParamsWithType(ast, i, gpa);
+        var iter = params.iterator();
+        std.debug.print("{s}:\n", .{getFunctionName(ast, i)});
+        while (iter.next()) |param| {
+            std.debug.print("\t{s}:{s}\n", .{ param.key_ptr.*, param.value_ptr.* });
+        }
     }
-    try printSlice(std.zig.Ast.Node.Index, try getAllFunctions(ast, gpa), stdout);
-
     try stdout.flush();
 
     std.process.exit(0);
