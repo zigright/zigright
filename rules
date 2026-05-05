@@ -1,5 +1,5 @@
-source: Map(Set(TaggedUnion))
-sink: Map(Set(TaggedUnion))
+source: Map(decl_token, Set(TaggedUnion))
+sink: Map(decl_token, Set(TaggedUnion))
 
 # Rules:
 source[var]("var = undefined") = Uninit
@@ -21,7 +21,7 @@ Node1 and Node2:
     sink[var] = sink1[var] | sink2[var]
 
 # Annotations:
-Recursively apply these rules, figure out what changes a function should have
+Recursively apply these rules, figure out what changes a function should have. Error if you detect recursion, but maybe permit manual annotations?
 
 # Errors:
 setting source[var] when source[var] only contains Alloc(...) and sink[var] only contains Uninit
