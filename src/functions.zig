@@ -2,7 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const utils = @import("utils.zig");
 
-pub fn getFunctionName(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
+pub fn getFunctionName(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
     const node = tree.nodes.get(@intFromEnum(nodeIndex));
     assert(node.tag == .fn_decl);
     const start_token_index = tree.firstToken(node.data.node_and_node.@"0");
@@ -17,7 +17,7 @@ pub fn getFunctionName(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []c
     unreachable;
 }
 
-pub fn getFunctionReturnType(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
+pub fn getFunctionReturnType(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
     const nodeData = tree.nodeData(nodeIndex);
     const fnProtoNode = tree.nodes.get(@intFromEnum(nodeData.node_and_node.@"0"));
     var returnIndex: std.zig.Ast.Node.Index = undefined;
@@ -35,7 +35,7 @@ pub fn getFunctionReturnType(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Inde
     return utils.spanToSlice(tree, tree.tokensToSpan(startTokenIndex, lastTokenIndex, tree.nodeMainToken(returnIndex)));
 }
 
-pub fn getAllFunctionNames(tree: std.zig.Ast, gpa: std.mem.Allocator) ![][]const u8 {
+pub fn getAllFunctionNames(tree: *std.zig.Ast, gpa: std.mem.Allocator) ![][]const u8 {
     var ret: std.ArrayList([]const u8) = .empty;
     for (0..tree.nodes.len) |value| {
         const node = tree.nodes.get(value);
@@ -47,7 +47,7 @@ pub fn getAllFunctionNames(tree: std.zig.Ast, gpa: std.mem.Allocator) ![][]const
     return ret.items;
 }
 
-pub fn getAllFunctions(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
+pub fn getAllFunctions(tree: *std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
     var ret: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
     for (tree.nodes.items(.tag), 0..) |value, index| {
         if (value == .fn_decl) {
@@ -57,7 +57,7 @@ pub fn getAllFunctions(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast
     return ret.items;
 }
 
-pub fn getFunctionParamsWithType(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) !std.StringHashMap([]const u8) {
+pub fn getFunctionParamsWithType(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) !std.StringHashMap([]const u8) {
     var map: std.StringHashMap([]const u8) = .init(gpa);
     var buffer: [1]std.zig.Ast.Node.Index = undefined;
     const funcProto = tree.fullFnProto(&buffer, nodeIndex).?;
@@ -70,7 +70,7 @@ pub fn getFunctionParamsWithType(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.
     return map;
 }
 
-pub fn getAllFunctionsWithAlloc(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
+pub fn getAllFunctionsWithAlloc(tree: *std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
     const functionIndices = try getAllFunctions(tree, gpa);
     var node: std.zig.Ast.Node = undefined;
     var ret: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
@@ -91,7 +91,7 @@ pub fn getAllFunctionsWithAlloc(tree: std.zig.Ast, gpa: std.mem.Allocator) ![]st
     return ret.items;
 }
 
-pub fn getReturnExpr(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
+pub fn getReturnExpr(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []const u8 {
     const returnNode = tree.nodes.get(@intFromEnum(nodeIndex));
     const returnExprIndex = returnNode.data.opt_node.unwrap();
     if (returnExprIndex != null) {
@@ -103,7 +103,7 @@ pub fn getReturnExpr(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) []con
     return "void";
 }
 
-fn getReturn(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) ![][]const u8 {
+pub fn getReturn(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) ![][]const u8 {
     var ret: std.ArrayList([]const u8) = .empty;
     const funcBodyIndex = tree.nodeData(nodeIndex).node_and_node.@"1";
     var stack: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
@@ -180,7 +180,7 @@ fn getReturn(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.
     return ret.items;
 }
 
-pub fn getFunctionBlockIndex(tree: std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) std.zig.Ast.Node.Index {
+pub fn getFunctionBlockIndex(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) std.zig.Ast.Node.Index {
     assert(tree.nodeTag(nodeIndex) == .fn_decl);
     return tree.nodes.get(@intFromEnum(nodeIndex)).data.node_and_node.@"1";
 }

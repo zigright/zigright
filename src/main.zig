@@ -1,6 +1,7 @@
 const std = @import("std");
 const utils = @import("utils.zig");
-const functions = @import("function.zig");
+const functions = @import("functions.zig");
+const variables = @import("variables.zig");
 const version_data = @import("version_data");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
@@ -76,13 +77,17 @@ pub fn main(init: std.process.Init) !void {
     var ast = try std.zig.Ast.parse(gpa, src_code, .zig);
     defer ast.deinit(gpa);
 
-    for (try functions.getAllFunctionsWithAlloc(ast, gpa)) |i| {
-        const params = try functions.getFunctionParamsWithType(ast, i, gpa);
-        var iter = params.iterator();
-        std.debug.print("{s}:\n", .{functions.getFunctionName(ast, i)});
-        while (iter.next()) |param| {
-            std.debug.print("\t{s}:{s}\n", .{ param.key_ptr.*, param.value_ptr.* });
+    for (try functions.getAllFunctions(&ast, gpa)) |i| {
+        const vars = try variables.getVariablesUnderFunction(&ast, i, gpa);
+        for (vars) |v| {
+            std.debug.print("{s} {s}\n", .{ functions.getFunctionName(&ast, i), variables.getVariableName(&ast, v) });
         }
+        // const params = try functions.getFunctionParamsWithType(ast, i, gpa);
+        // var iter = params.iterator();
+        // std.debug.print("{s}:\n", .{functions.getFunctionName(ast, i)});
+        // while (iter.next()) |param| {
+        //     std.debug.print("\t{s}:{s}\n", .{ param.key_ptr.*, param.value_ptr.* });
+        // }
     }
     try stdout.flush();
 
