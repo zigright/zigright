@@ -3,17 +3,18 @@
 pub const CanonicalToken = std.zig.Ast.TokenIndex;
 
 pub fn Set(comptime T: type) type {
-    return std.AutoHashMap(T, undefined);
+    return std.AutoHashMap(T, void);
 }
 
 pub const SourceState = union(enum) {
-    Uninit: undefined,
+    Uninit: void,
     Alloc: CanonicalToken,
     Maybe: CanonicalToken,
+    FnInput: void,
 };
 
 pub const SinkState = union(enum) {
-    Uninit: undefined,
+    Uninit: void,
     Dealloc: CanonicalToken,
     Maybe: CanonicalToken,
 };
@@ -43,7 +44,7 @@ pub const MemoryOperation = union(enum) {
 pub const CFGNode = struct {
     nodes_in: []*CFGNode,
     nodes_out: []*CFGNode,
-    type: enum {
+    kind: enum {
         Normal,
         // One per function
         Return,
