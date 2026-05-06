@@ -7,14 +7,14 @@ pub fn Set(comptime T: type) type {
 }
 
 pub const SourceState = union(enum) {
-    Uninit: void,
+    Uninit,
     Alloc: CanonicalToken,
     Maybe: CanonicalToken,
-    FnInput: void,
+    FnInput,
 };
 
 pub const SinkState = union(enum) {
-    Uninit: void,
+    Uninit,
     Dealloc: CanonicalToken,
     Maybe: CanonicalToken,
 };
@@ -25,7 +25,9 @@ pub const MemoryOperation = union(enum) {
         result: CanonicalToken,
     },
     FunctionCall: struct {
+        function_name: CanonicalToken,
         arguments: []CanonicalToken,
+        allocator_arg_indices: []u32,
         result: ?CanonicalToken,
     },
     Deallocation: struct {
@@ -41,6 +43,12 @@ pub const MemoryOperation = union(enum) {
     },
 };
 
+pub fn SetDict(comptime T: type) type {
+    return std.AutoHashMap(CanonicalToken, Set(T));
+}
+pub const SourceDict = SetDict(SourceState);
+pub const SinkDict = std.AutoHashMap(CanonicalToken, Set(SinkState));
+
 pub const CFGNode = struct {
     nodes_in: []*CFGNode,
     nodes_out: []*CFGNode,
@@ -53,8 +61,8 @@ pub const CFGNode = struct {
     },
     // The token is the "canonical" token for a given variable -- the declaration, for example.
     // If a token doesn't have an entry, it is implicitly Uninit.
-    sources_out: std.AutoHashMap(CanonicalToken, Set(SourceState)),
-    sinks_out: std.AutoHashMap(CanonicalToken, Set(SinkState)),
+    sources_out: SourceDict,
+    sinks_out: SinkDict,
     ast_nodes: []std.zig.Ast.Node.Index,
     // At most one memory operation per node.
     mem_op: ?MemoryOperation,
