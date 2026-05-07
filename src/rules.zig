@@ -36,7 +36,7 @@ fn update_block(
     defer recursive_deinit(cfg_def.SinkState, sinks_out);
 
     if (block.mem_op == null) {
-        // Easy!
+        // Easy! Leave them as-is.
     } else {
         switch (block.mem_op.?) {
             .Allocation => |*val| {
@@ -140,6 +140,7 @@ fn update_block(
         }
     }
     if (!block.annotations_initialized) {
+        block.annotations_initialized = true;
         changed = true;
     } else {
         changed = !(recursive_eq(cfg_def.SourceState, sources_in, block.sources_in) and
@@ -147,7 +148,8 @@ fn update_block(
             recursive_eq(cfg_def.SinkState, sinks_in, block.sinks_in) and
             recursive_eq(cfg_def.SinkState, sinks_out, block.sinks_out));
     }
-    if (changed and block.annotations_initialized) {
+    if (changed) {
+        // Even if they're uninitialized, empty hashmaps needed an allocator.
         recursive_deinit(cfg_def.SourceState, block.sources_in);
         recursive_deinit(cfg_def.SourceState, block.sources_out);
         recursive_deinit(cfg_def.SinkState, block.sinks_in);
@@ -157,7 +159,6 @@ fn update_block(
         block.sinks_in = recursive_clone(cfg_def.SinkState, sinks_in, gpa);
         block.sinks_out = recursive_clone(cfg_def.SinkState, sinks_out, gpa);
     }
-    block.annotations_initialized = true;
     return changed;
 }
 
