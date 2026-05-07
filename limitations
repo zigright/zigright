@@ -1,0 +1,10 @@
+cannot handle:
+ - containers:
+   - any pointer trickery
+   - fields of struct being allocated separately
+   - use of allocators hidden in objects (arguably poor form)
+ - derived allocators
+ - pointer aliasing at all
+ - recursion
+ - multiple threads
+ - real programs :(
