@@ -410,16 +410,14 @@ test "function call" {
     var baz_start = CFGNodeCreate();
     baz_start.kind = .Start;
     var baz_node1 = CFGNodeCreate();
-    var baz_node2 = CFGNodeCreate();
     var baz_end = CFGNodeCreate();
     baz_end.kind = .Return;
 
     try connectNodes(&baz_start, &baz_node1);
-    try connectNodes(&baz_node1, &baz_node2);
-    try connectNodes(&baz_node2, &baz_end);
+    try connectNodes(&baz_node1, &baz_end);
 
     var args = [_]u32{3};
-    foo_node1.mem_op = .{ .FunctionCall = .{ .result = 14, .arguments = &args, .function_name = 29 } };
+    foo_node1.mem_op = .{ .FunctionCall = .{ .result = 14, .arguments = &args, .function_name = baz } };
 
     baz_node1.mem_op = .{ .Allocation = .{ .result = 44, .allocator = 31 } };
 
