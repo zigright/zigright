@@ -7,4 +7,5 @@ cannot handle:
  - pointer aliasing at all
  - recursion
  - multiple threads
+ - using deinit() as a non-free
  - real programs :(

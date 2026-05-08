@@ -73,6 +73,8 @@ pub const CFGNode = struct {
     // This should be initialized to false when creating the node,
     // and will be updated later. This is to prevent a problem with loops.
     annotations_initialized: bool,
+    // This is to help us save time when doing multiple iterations of the flow algorithm.
+    round_visited: u32,
 };
 
 pub const AnalyzedFn = struct {

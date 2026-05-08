@@ -8,6 +8,33 @@ fn analyze_function(
     if (analyzed.analysis != null) {
         return &analyzed.analysis.?;
     }
+    const start_node = &analyzed.func.start_node;
+    var end_node: ?*cfg_def.CFGNode = null;
+    var round_num: u32 = 0;
+
+    var changed: bool = true;
+    var stack: std.ArrayList(*cfg_def.CFGNode) = .empty;
+    defer stack.deinit(gpa);
+    while (changed) {
+        // Perform a depth-first search.
+        changed = false;
+        stack.append(gpa, start_node);
+        while (stack.pop()) |node| {
+            // We can skip if it has already been visited this round.
+            if (node.round_visited == round_num and node.annotations_initialized) {
+                continue;
+            }
+            changed |= update_block(node, parsed, callstack, gpa);
+            node.round_visited = round_num;
+            for (node.nodes_out) |child| {
+                stack.append(gpa, child);
+            }
+            if (end_node == null and node.kind == .Return) {
+                end_node = node;
+            }
+        }
+        round_num += 1;
+    }
 }
 
 // The return value indicates whether anything was changed.
@@ -107,6 +134,11 @@ fn update_block(
                                 continue :state_loop;
                             },
                             .FnInput => {
+                                // Do a direct source-sink translation. The source set is
+                                // already translated, so we don't need to use arg_map.
+                                if (sources_out.getPtr(translated)) |var_sources| {
+                                    source2sink(var_sources, outer_varstate.value_ptr);
+                                }
                                 continue :state_loop;
                             },
                             .Maybe => |alloc| .{ .Maybe = arg_map.get(alloc) orelse {
@@ -170,7 +202,7 @@ fn lists_to_hashmap(comptime T: type, from: []T, to: []T, gpa: std.mem.Allocator
     return map;
 }
 
-// For handling bare "deinit"s
+// For handling bare "Deinit"s or sink "FnInput"s
 fn source2sink(
     var_sources: *cfg_def.Set(cfg_def.SourceState),
     var_sinks: *cfg_def.Set(cfg_def.SinkState),
