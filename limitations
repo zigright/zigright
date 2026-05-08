@@ -4,7 +4,9 @@ cannot handle:
    - fields of struct being allocated separately
    - use of allocators hidden in objects (arguably poor form)
  - derived allocators
+ - inline allocation during a function call
  - pointer aliasing at all
+ - global variables
  - recursion
  - multiple threads
  - using deinit() as a non-free
