@@ -1,6 +1,7 @@
 const std = @import("std");
 const cfg_def = @import("cfg_def.zig");
 const rules = @import("rules.zig");
+const analysis = @import("analysis.zig");
 const expect = std.testing.expect;
 
 var debug_alloc: std.heap.DebugAllocator(.{}) = .init;
@@ -174,7 +175,7 @@ fn connectNodes(predecessor: *cfg_def.CFGNode, successor: *cfg_def.CFGNode) !voi
 test "deinit" {
     //
     // fn foo(v: anytype, gpa: std.mem.Allocator) void {
-    // v.init(gpa);
+    // v = .init(gpa);
     // v.deinit();
     // v = v + 1;
     // }
@@ -209,7 +210,7 @@ test "deinit" {
     try expect(changed);
     try expect(node1.in.sinks.get(3) == null);
     // Source should change
-    try expect(node1.out.sources.get(3).?.contains(.{ .Alloc = 7 }) and node1.out.sinks.get(3).?.count() == 1);
+    try expect(node1.out.sources.get(3).?.contains(.{ .Alloc = 7 }) and node1.out.sources.get(3).?.count() == 1);
 
     try expect(node2.in.sinks.get(3) == null);
     try expect(node2.out.sinks.get(3) == null);
@@ -270,38 +271,36 @@ test "deinitExplicit" {
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.in.sources, &node2.out.sources));
 }
 
-pub fn doubleFree() !struct {
-    u32,
-    cfg_def.ParsedCFG,
-    cfg_def.Set(cfg_def.CanonicalToken),
-    std.mem.Allocator,
-} {
-    // fn foo(v: anytype, gpa: std.mem.Allocator)  {
-    //     v = gpa.alloc();
-    //     gpa.dealloc(v);
-    //     gpa.dealloc(v);
-    // }
+test "double free" {
+    const fn_name: u32 = 1;
+    var start = CFGNodeCreate();
+    start.kind = .Start;
     var node1 = CFGNodeCreate();
     var node2 = CFGNodeCreate();
     var node3 = CFGNodeCreate();
-    defer {
-        node1.deinit();
-        node2.deinit();
-        node3.deinit();
-    }
+    var end = CFGNodeCreate();
+    end.kind = .Return;
+
+    try connectNodes(&start, &node1);
     try connectNodes(&node1, &node2);
     try connectNodes(&node2, &node3);
+    try connectNodes(&node3, &end);
 
     node1.mem_op = .{ .Allocation = .{ .allocator = 7, .result = 3 } };
     node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
     node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
 
     var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
-    callstack.put(1, {});
-    const parsedFn: cfg_def.ParsedFn = .{ .start_node = &node1, .return_tok = null, .decl_params = .{ 3, 7 } };
+    try callstack.put(fn_name, {});
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = start, .return_node = end, .return_tok = null, .decl_params = &[_]u32{7} };
     const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
     var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
-    parsed.functions.put(1, analyzedFn);
+    try parsed.functions.put(fn_name, analyzedFn);
 
-    return .{ @intCast(1), parsed, callstack, gpa };
+    _ = try rules.analyze_function(fn_name, &parsed, &callstack, gpa);
+    const alerts = try analysis.generate_alerts(fn_name, &parsed, gpa);
+    try expect(alerts.len == 1);
+    try expect(alerts[0].kind == .DoubleFree);
+    try expect(alerts[0].variable == 3);
+    std.debug.print("{any}\n", .{alerts[0]});
 }

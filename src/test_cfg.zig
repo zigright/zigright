@@ -80,10 +80,11 @@ test "implicit uninit" {
     try expect(child.out.sources.get(1).?.contains(.{ .Uninit = {} }));
     try expect(child.out.sources.get(1).?.contains(.{ .Alloc = 3 }));
     try expect(child.out.sources.get(1).?.contains(.{ .FnInput = {} }));
+    try expect(child.out.sources.get(1).?.count() == 3);
 }
 
 // test "function call" {
-//     //
+//     zero
 // }
 
 // test ""

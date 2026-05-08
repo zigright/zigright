@@ -10,4 +10,5 @@ cannot handle:
  - recursion
  - multiple threads
  - using deinit() as a non-free
+ - use-after-free, but could be easily extended
  - real programs :(

@@ -147,11 +147,6 @@ pub const CFGNode = struct {
     }
 };
 
-pub const AnalyzedFn = struct {
-    func: ParsedFn,
-    analysis: ?BlockFlow,
-};
-
 pub const BlockFlow = struct {
     const Self = BlockFlow;
 
@@ -169,15 +164,27 @@ pub const BlockFlow = struct {
         self.sources.deinit();
         self.sinks.deinit();
     }
+
+    pub fn clear(self: *Self) void {
+        self.sources.clearAndFree();
+        self.sinks.clearAndFree();
+    }
 };
 
 pub const ParsedFn = struct {
     start_node: CFGNode,
+    return_node: CFGNode,
     // The tokens for the arguments in the function prototype, such
     // that I can correlate them back.
-    decl_params: []CanonicalToken,
+    decl_params: []const CanonicalToken,
     // Similarly, the return value's token, if there is one.
     return_tok: ?CanonicalToken,
+};
+
+pub const AnalyzedFn = struct {
+    func: ParsedFn,
+    // This should be initialized to null. The analysis procedures will handle it.
+    analysis: ?BlockFlow,
 };
 
 pub const ParsedCFG = struct {

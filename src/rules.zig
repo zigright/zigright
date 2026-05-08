@@ -1,11 +1,12 @@
-const cfg_def = @import("cfg_def.zig");
 const std = @import("std");
+const cfg_def = @import("cfg_def.zig");
 
 pub const ParseError = error{
     UninitVarDeinited,
     LocalScopeAllocator,
     RecursiveCall,
     OutOfMemory,
+    NoPtrAlias,
 };
 
 pub fn analyze_function(
@@ -19,8 +20,15 @@ pub fn analyze_function(
         return &analyzed.analysis.?;
     }
     const start_node = &analyzed.func.start_node;
-    var end_node: ?*cfg_def.CFGNode = null;
     var round_num: u32 = 0;
+
+    // Initialize the start node to have FnInput for all its arguments.
+    var fninput_set: cfg_def.Set(cfg_def.SourceState) = .init(gpa);
+    defer fninput_set.deinit();
+    try fninput_set.put(.{ .FnInput = {} }, {});
+    for (analyzed.func.decl_params) |param| {
+        try start_node.out.sources.put(param, try fninput_set.clone());
+    }
 
     var changed: bool = true;
     var stack: std.ArrayList(*cfg_def.CFGNode) = .empty;
@@ -39,13 +47,10 @@ pub fn analyze_function(
             for (node.nodes_out) |child| {
                 try stack.append(gpa, child);
             }
-            if (end_node == null and node.kind == .Return) {
-                end_node = node;
-            }
         }
         round_num += 1;
     }
-    return &end_node.?.out;
+    return &analyzed.func.return_node.out;
 }
 
 // The return value indicates whether anything was changed.
@@ -85,9 +90,10 @@ pub fn update_block(
                 try set_unconditional(cfg_def.SourceState, &sources_out, val.result, .{
                     .Alloc = val.allocator,
                 }, gpa);
-                try set_unconditional(cfg_def.SinkState, &sinks_out, val.result, .{
-                    .Uninit = {},
-                }, gpa);
+                if (sinks_out.getPtr(val.result)) |var_sinks| {
+                    var_sinks.deinit();
+                    _ = sinks_out.remove(val.result);
+                }
             },
             .Deallocation => |*val| {
                 // Mark that variable as unconditionally deallocated.
@@ -184,16 +190,34 @@ pub fn update_block(
                             outer_sources.value_ptr.* = .init(gpa);
                         }
                         // Clear it if we don't have .FnInput as an option.
-                        if (!inner_sources.contains(.{ .FnInput = {} })) {
-                            outer_sources.value_ptr.clearAndFree();
-                        }
+                        // I'm pretty sure we shouldn't do this.
+                        // if (!inner_sources.contains(.{ .FnInput = {} })) {
+                        //     outer_sources.value_ptr.clearAndFree();
+                        // }
                         // Alright, translate the rest!
                         // Again, we hope the allocators are all passed in.
                         var state_iter = inner_sources.keyIterator();
                         state_loop: while (state_iter.next()) |state| {
                             const trans_state: cfg_def.SourceState = switch (state.*) {
                                 .Uninit => .{ .Uninit = {} },
-                                .FnInput => {
+                                .FnInput => fninput: {
+                                    // Check which function input variable this is.
+                                    if (arg_map.get(inner_tok)) |translated| {
+                                        if (sources_out.getPtr(translated)) |var_sources| {
+                                            var source_it = var_sources.keyIterator();
+                                            while (source_it.next()) |source| {
+                                                switch (source.*) {
+                                                    .FnInput => {
+                                                        // TODO track arg index to trace this?
+                                                        return ParseError.NoPtrAlias;
+                                                    },
+                                                    else => {
+                                                        break :fninput source.*;
+                                                    },
+                                                }
+                                            }
+                                        }
+                                    }
                                     continue :state_loop;
                                 },
                                 .Maybe => |alloc| .{ .Maybe = arg_map.get(alloc) orelse {
@@ -236,8 +260,8 @@ pub fn update_block(
 
 fn lists_to_hashmap(
     comptime T: type,
-    from: []T,
-    to: []T,
+    from: []const T,
+    to: []const T,
     gpa: std.mem.Allocator,
 ) !std.AutoHashMap(T, T) {
     var map = std.AutoHashMap(T, T).init(gpa);
