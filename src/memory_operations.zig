@@ -66,3 +66,62 @@ test "allocation" {
     changed = try rules.update_block(&child, &parsed, &callstack, gpa);
     try expect(!changed);
 }
+
+test "deallocation" {
+    //
+    // fn foo(v: anytype, gpa: std.mem.Allocator) void {
+    // gpa.dealloc(v);
+    // v = v + 1;
+    // }
+    // Two nodes, check if dealloc propagates
+    var parent: cfg_def.CFGNode = .init(gpa);
+    var child: cfg_def.CFGNode = .init(gpa);
+    defer {
+        parent.deinit();
+        child.deinit();
+    }
+    // Dummy vars
+    parent.ast_nodes = &[_]std.zig.Ast.Node.Index{};
+    child.ast_nodes = &[_]std.zig.Ast.Node.Index{};
+    // Parent doesn't have any inputs
+    parent.nodes_in = &[_]*cfg_def.CFGNode{};
+    var parent_outs = [_]*cfg_def.CFGNode{&child};
+    parent.nodes_out = &parent_outs;
+    var child_ins = [_]*cfg_def.CFGNode{&parent};
+    child.nodes_in = &child_ins;
+    // Child doesn't have any outputs
+    child.nodes_out = &[_]*cfg_def.CFGNode{};
+
+    parent.mem_op = .{ .Deallocation = .{ .variable = 3, .allocator = 7 } };
+
+    // Dummy vars to satisfy the function signature
+    var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+
+    // These should be null as we didn't initialize anything
+    try expect(parent.in.sinks.get(3) == null);
+    try expect(parent.out.sinks.get(3) == null);
+    var changed = try rules.update_block(&parent, &parsed, &callstack, gpa);
+    try expect(changed);
+    try expect(parent.in.sinks.get(3) == null);
+    try expect(parent.out.sinks.get(3).?.contains(.{ .Dealloc = 7 }) and parent.out.sinks.get(3).?.count() == 1);
+
+    try expect(child.in.sinks.get(3) == null);
+    try expect(child.out.sinks.get(3) == null);
+    changed = try rules.update_block(&child, &parsed, &callstack, gpa);
+    try expect(changed);
+
+    // Child inherits
+    try expect(cfg_def.recursive_eq(cfg_def.SinkState, &parent.out.sinks, &child.in.sinks));
+    // Child propogates without change
+    try expect(cfg_def.recursive_eq(cfg_def.SinkState, &child.in.sinks, &child.out.sinks));
+
+    // Child inherits
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &parent.out.sources, &child.in.sources));
+    // Child propogates without change
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &parent.out.sources, &child.out.sources));
+
+    // The second update should not change it.
+    changed = try rules.update_block(&child, &parsed, &callstack, gpa);
+    try expect(!changed);
+}
