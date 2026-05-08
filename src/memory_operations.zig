@@ -353,3 +353,39 @@ test "double alloc without free" {
     try expect(alerts[0].kind == .MemoryLeakClobber);
     try expect(alerts[0].variable == 14);
 }
+
+test "alloc without free or return" {
+    // fn foo(gpa: std.mem.Allocator) void  {
+    // var bar = gpa.alloc();
+    // DUMMY_STATEMENT_THAT_DOESNT_INVOLVE_MEM
+    // }
+    const fn_name: u32 = 1;
+    var start = CFGNodeCreate();
+    start.kind = .Start;
+    var node1 = CFGNodeCreate();
+    var node2 = CFGNodeCreate();
+    var end = CFGNodeCreate();
+    end.kind = .Return;
+
+    try connectNodes(&start, &node1);
+    try connectNodes(&node1, &node2);
+    try connectNodes(&node2, &end);
+
+    node1.mem_op = .{ .Allocation = .{ .allocator = 3, .result = 14 } };
+
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+    try callstack.put(fn_name, {});
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = start, .return_node = end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    try parsed.functions.put(fn_name, analyzedFn);
+
+    _ = try rules.analyze_function(fn_name, &parsed, &callstack, gpa);
+    const alerts = try analysis.generate_alerts(fn_name, &parsed, gpa);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
+    try expect(alerts.len == 1);
+    try expect(alerts[0].kind == .MemoryLeakDrop);
+    try expect(alerts[0].variable == 14);
+}
