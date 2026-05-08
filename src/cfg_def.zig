@@ -51,6 +51,9 @@ pub fn SetDict(comptime T: type) type {
     return std.AutoHashMap(CanonicalToken, Set(T));
 }
 
+// AutoHashMap is a builtin bype, so we can't override the implementation
+// of .clone(), .deinit(), .eq(). But we can make equivalent functions
+// that deal with the sets properly.
 pub fn recursive_clone(
     comptime T: type,
     set_dict: *const SetDict(T),

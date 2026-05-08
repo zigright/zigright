@@ -302,5 +302,5 @@ test "double free" {
     try expect(alerts.len == 1);
     try expect(alerts[0].kind == .DoubleFree);
     try expect(alerts[0].variable == 3);
-    std.debug.print("{any}\n", .{alerts[0]});
+    // std.debug.print("{any}\n", .{alerts[0]});
 }

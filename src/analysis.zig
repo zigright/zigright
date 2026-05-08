@@ -114,9 +114,9 @@ fn double_free(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.Pa
                 // It might not have been freed yet.
                 return null;
             }
+            // Alright. A variable is definitely freed, and it is also definitely already freed.
+            return .DoubleFree;
         }
-        // Okay. So here we are. A variable is definitely freed, and it is also definitely already freed.
-        return .DoubleFree;
     }
     // No memory operation? No frees.
     return null;
@@ -197,6 +197,27 @@ fn memory_leak_drop(ret_token: ?cfg.CanonicalToken, block: *cfg.CFGNode, varname
     }
     return null;
 }
+
+// Detects: if this block frees this variable with an allocator that does not appear in the variable's allocation state.
+// fn cross_free(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.ParsedCFG, gpa: std.mem.Allocator) !?AlertKind {
+//     if (block.mem_op) |mem_op| {
+//         // Check: is this certainly de
+//         switch (mem_op) {
+//             // Allocations can't dealloc, and bare .deinit() cannot cross-free.
+//             .Allocation,
+//             .Deinit,
+//             => {
+//                 return null;
+//             },
+//             .Deallocation => |val| val.variable,
+//             .DeinitExplicit => |val| val.variable,
+//             .FunctionCall => |op| fn_call: {
+//                 // All the functions should be analyzed by now.
+//                 const annotations = parsed.functions.get(op.function_name).?.analysis.?;
+//             },
+//         }
+//     }
+// }
 
 // Collapse down to the "types" of things
 fn collapse(comptime T: type, set: *const cfg.Set(T), gpa: std.mem.Allocator) !cfg.Set(T) {
