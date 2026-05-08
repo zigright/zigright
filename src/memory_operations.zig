@@ -269,3 +269,39 @@ test "deinitExplicit" {
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node1.out.sources, &node2.in.sources));
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.in.sources, &node2.out.sources));
 }
+
+pub fn doubleFree() !struct {
+    u32,
+    cfg_def.ParsedCFG,
+    cfg_def.Set(cfg_def.CanonicalToken),
+    std.mem.Allocator,
+} {
+    // fn foo(v: anytype, gpa: std.mem.Allocator)  {
+    //     v = gpa.alloc();
+    //     gpa.dealloc(v);
+    //     gpa.dealloc(v);
+    // }
+    var node1 = CFGNodeCreate();
+    var node2 = CFGNodeCreate();
+    var node3 = CFGNodeCreate();
+    defer {
+        node1.deinit();
+        node2.deinit();
+        node3.deinit();
+    }
+    try connectNodes(&node1, &node2);
+    try connectNodes(&node2, &node3);
+
+    node1.mem_op = .{ .Allocation = .{ .allocator = 7, .result = 3 } };
+    node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
+    node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
+
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+    callstack.put(1, {});
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = &node1, .return_tok = null, .decl_params = .{ 3, 7 } };
+    const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    parsed.functions.put(1, analyzedFn);
+
+    return .{ @intCast(1), parsed, callstack, gpa };
+}
