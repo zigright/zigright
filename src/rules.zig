@@ -9,7 +9,7 @@ pub const ParseError = error{
     NoPtrAlias,
 };
 
-fn analyze_function(
+pub fn analyze_function(
     name: cfg_def.CanonicalToken,
     parsed: *cfg_def.ParsedCFG,
     gpa: std.mem.Allocator,
@@ -32,7 +32,7 @@ fn analyze_function_inner(
     const start_node = &analyzed.func.start_node;
     var round_num: u32 = 0;
 
-    callstack.put(name, {});
+    try callstack.put(name, {});
 
     // Initialize the start node to have FnInput for all its arguments.
     var fninput_set: cfg_def.Set(cfg_def.SourceState) = .init(gpa);

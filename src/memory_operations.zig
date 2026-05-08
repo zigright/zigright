@@ -38,18 +38,19 @@ test "allocation" {
 
     // Dummy vars to satisfy the function signature
     var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
 
     // These should be null as we didn't initialize anything
     try expect(parent.in.sources.get(14) == null);
     try expect(parent.out.sources.get(14) == null);
-    var changed = try rules.update_block(&parent, &parsed, gpa);
+    var changed = try rules.update_block(&parent, &parsed, &callstack, gpa);
     try expect(changed);
     try expect(parent.in.sources.get(14) == null);
     try expect(parent.out.sources.get(14).?.contains(.{ .Alloc = 3 }) and parent.out.sources.get(14).?.count() == 1);
 
     try expect(child.in.sources.get(14) == null);
     try expect(child.out.sources.get(14) == null);
-    changed = try rules.update_block(&child, &parsed, gpa);
+    changed = try rules.update_block(&child, &parsed, &callstack, gpa);
     try expect(changed);
 
     // Child inherits
@@ -63,7 +64,7 @@ test "allocation" {
     try expect(cfg_def.recursive_eq(cfg_def.SinkState, &parent.out.sinks, &child.out.sinks));
 
     // The second update should not change it.
-    changed = try rules.update_block(&child, &parsed, gpa);
+    changed = try rules.update_block(&child, &parsed, &callstack, gpa);
     try expect(!changed);
 }
 
@@ -96,18 +97,19 @@ test "deallocation" {
 
     // Dummy vars to satisfy the function signature
     var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
 
     // These should be null as we didn't initialize anything
     try expect(parent.in.sinks.get(3) == null);
     try expect(parent.out.sinks.get(3) == null);
-    var changed = try rules.update_block(&parent, &parsed, gpa);
+    var changed = try rules.update_block(&parent, &parsed, &callstack, gpa);
     try expect(changed);
     try expect(parent.in.sinks.get(3) == null);
     try expect(parent.out.sinks.get(3).?.contains(.{ .Dealloc = 7 }) and parent.out.sinks.get(3).?.count() == 1);
 
     try expect(child.in.sinks.get(3) == null);
     try expect(child.out.sinks.get(3) == null);
-    changed = try rules.update_block(&child, &parsed, gpa);
+    changed = try rules.update_block(&child, &parsed, &callstack, gpa);
     try expect(changed);
 
     // Child inherits
@@ -121,7 +123,7 @@ test "deallocation" {
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &parent.out.sources, &child.out.sources));
 
     // The second update should not change it.
-    changed = try rules.update_block(&child, &parsed, gpa);
+    changed = try rules.update_block(&child, &parsed, &callstack, gpa);
     try expect(!changed);
 }
 
@@ -196,6 +198,7 @@ test "deinit" {
 
     // Dummy vars to satisfy the function signature
     var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
 
     // These should be null as we didn't initialize anything
     try expect(node1.in.sinks.get(3) == null);
@@ -203,7 +206,7 @@ test "deinit" {
     try expect(node1.in.sources.get(3) == null);
     try expect(node1.out.sources.get(3) == null);
 
-    var changed = try rules.update_block(&node1, &parsed, gpa);
+    var changed = try rules.update_block(&node1, &parsed, &callstack, gpa);
     try expect(changed);
     try expect(node1.in.sinks.get(3) == null);
     // Source should change
@@ -211,14 +214,14 @@ test "deinit" {
 
     try expect(node2.in.sinks.get(3) == null);
     try expect(node2.out.sinks.get(3) == null);
-    changed = try rules.update_block(&node2, &parsed, gpa);
+    changed = try rules.update_block(&node2, &parsed, &callstack, gpa);
     try expect(changed);
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node1.out.sources, &node2.in.sources));
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.in.sources, &node2.out.sources));
     // Update sink
     try expect(node2.out.sinks.get(3).?.contains(.{ .Dealloc = 7 }) and node2.out.sinks.get(3).?.count() == 1);
 
-    changed = try rules.update_block(&node3, &parsed, gpa);
+    changed = try rules.update_block(&node3, &parsed, &callstack, gpa);
     try expect(changed);
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.out.sources, &node3.in.sources));
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node3.in.sources, &node3.out.sources));
@@ -245,13 +248,14 @@ test "deinitExplicit" {
     node1.mem_op = .{ .DeinitExplicit = .{ .variable = 3, .allocator = 7 } };
 
     var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
 
     try expect(node1.in.sinks.get(3) == null);
     try expect(node1.in.sources.get(3) == null);
     try expect(node1.out.sinks.get(3) == null);
     try expect(node1.out.sources.get(3) == null);
 
-    var changed = try rules.update_block(&node1, &parsed, gpa);
+    var changed = try rules.update_block(&node1, &parsed, &callstack, gpa);
     try expect(changed);
     try expect(node1.out.sinks.get(3).?.contains(.{ .Dealloc = 7 }) and node1.out.sinks.get(3).?.count() == 1);
 
@@ -260,7 +264,7 @@ test "deinitExplicit" {
     try expect(node2.out.sinks.get(3) == null);
     try expect(node2.out.sources.get(3) == null);
 
-    changed = try rules.update_block(&node2, &parsed, gpa);
+    changed = try rules.update_block(&node2, &parsed, &callstack, gpa);
     try expect(changed);
 
     try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node1.out.sources, &node2.in.sources));
