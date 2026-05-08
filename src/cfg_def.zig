@@ -31,7 +31,6 @@ pub const MemoryOperation = union(enum) {
     FunctionCall: struct {
         function_name: CanonicalToken,
         arguments: []CanonicalToken,
-        allocator_arg_indices: []u32,
         result: ?CanonicalToken,
     },
     Deallocation: struct {
