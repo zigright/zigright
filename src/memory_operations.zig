@@ -228,3 +228,44 @@ test "deinit" {
     try expect(cfg_def.recursive_eq(cfg_def.SinkState, &node2.out.sinks, &node3.in.sinks));
     try expect(cfg_def.recursive_eq(cfg_def.SinkState, &node3.in.sinks, &node3.out.sinks));
 }
+
+test "deinitExplicit" {
+    // fn foo(v: anytype, gpa: std.mem.Allocator) void{
+    // v.deinit(gpa);
+    // v = v + 1;
+    // }
+    //
+    var node1 = CFGNodeCreate();
+    var node2 = CFGNodeCreate();
+    defer {
+        node1.deinit();
+        node2.deinit();
+    }
+
+    try connectNodes(&node1, &node2);
+
+    node1.mem_op = .{ .DeinitExplicit = .{ .variable = 3, .allocator = 7 } };
+
+    var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+
+    try expect(node1.in.sinks.get(3) == null);
+    try expect(node1.in.sources.get(3) == null);
+    try expect(node1.out.sinks.get(3) == null);
+    try expect(node1.out.sources.get(3) == null);
+
+    var changed = try rules.update_block(&node1, &parsed, &callstack, gpa);
+    try expect(changed);
+    try expect(node1.out.sinks.get(3).?.contains(.{ .Dealloc = 7 }) and node1.out.sinks.get(3).?.count() == 1);
+
+    try expect(node2.in.sinks.get(3) == null);
+    try expect(node2.in.sources.get(3) == null);
+    try expect(node2.out.sinks.get(3) == null);
+    try expect(node2.out.sources.get(3) == null);
+
+    changed = try rules.update_block(&node2, &parsed, &callstack, gpa);
+    try expect(changed);
+
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node1.out.sources, &node2.in.sources));
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.in.sources, &node2.out.sources));
+}
