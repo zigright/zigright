@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn spanToSlice(tree: std.zig.Ast, span: std.zig.Ast.Span) []const u8 {
+pub fn spanToSlice(tree: *std.zig.Ast, span: std.zig.Ast.Span) []const u8 {
     return tree.source[span.start..span.end];
 }
 

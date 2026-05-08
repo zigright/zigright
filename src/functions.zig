@@ -47,14 +47,15 @@ pub fn getAllFunctionNames(tree: *std.zig.Ast, gpa: std.mem.Allocator) ![][]cons
     return ret.items;
 }
 
+// Returns the indices of all the function prototypes
 pub fn getAllFunctions(tree: *std.zig.Ast, gpa: std.mem.Allocator) ![]std.zig.Ast.Node.Index {
-    var ret: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
+    var fnProtoIndices: std.ArrayList(std.zig.Ast.Node.Index) = .empty;
     for (tree.nodes.items(.tag), 0..) |value, index| {
         if (value == .fn_decl) {
-            try ret.append(gpa, @enumFromInt(index));
+            try fnProtoIndices.append(gpa, @enumFromInt(index));
         }
     }
-    return ret.items;
+    return fnProtoIndices.items;
 }
 
 pub fn getFunctionParamsWithType(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std.mem.Allocator) !std.StringHashMap([]const u8) {
@@ -180,7 +181,7 @@ pub fn getReturn(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index, gpa: std
     return ret.items;
 }
 
-pub fn getFunctionBlockIndex(tree: *std.zig.Ast, nodeIndex: std.zig.Ast.Node.Index) std.zig.Ast.Node.Index {
-    assert(tree.nodeTag(nodeIndex) == .fn_decl);
-    return tree.nodes.get(@intFromEnum(nodeIndex)).data.node_and_node.@"1";
+pub fn getFunctionBlockIndex(tree: *std.zig.Ast, fnProtoIndex: std.zig.Ast.Node.Index) std.zig.Ast.Node.Index {
+    assert(tree.nodeTag(fnProtoIndex) == .fn_decl);
+    return tree.nodes.get(@intFromEnum(fnProtoIndex)).data.node_and_node.@"1";
 }

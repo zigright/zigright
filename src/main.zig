@@ -5,6 +5,7 @@ const variables = @import("variables.zig");
 const version_data = @import("version_data");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const bb = @import("bb.zig");
 
 var progname: []const u8 = undefined;
 
@@ -78,10 +79,7 @@ pub fn main(init: std.process.Init) !void {
     defer ast.deinit(gpa);
 
     for (try functions.getAllFunctions(&ast, gpa)) |i| {
-        const vars = try variables.getVariablesUnderFunction(&ast, i, gpa);
-        for (vars) |v| {
-            std.debug.print("{s} {s}\n", .{ functions.getFunctionName(&ast, i), variables.getVariableName(&ast, v) });
-        }
+        try bb.getBasicBlocks(&ast, i, gpa);
     }
 
     try stdout.flush();
