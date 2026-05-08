@@ -9,7 +9,17 @@ pub const ParseError = error{
     NoPtrAlias,
 };
 
-pub fn analyze_function(
+fn analyze_function(
+    name: cfg_def.CanonicalToken,
+    parsed: *cfg_def.ParsedCFG,
+    gpa: std.mem.Allocator,
+) !*cfg_def.BlockFlow {
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+    defer callstack.deinit();
+    return try analyze_function_inner(name, parsed, &callstack, gpa);
+}
+
+fn analyze_function_inner(
     name: cfg_def.CanonicalToken,
     parsed: *cfg_def.ParsedCFG,
     callstack: *cfg_def.Set(cfg_def.CanonicalToken),
@@ -21,6 +31,8 @@ pub fn analyze_function(
     }
     const start_node = &analyzed.func.start_node;
     var round_num: u32 = 0;
+
+    callstack.put(name, {});
 
     // Initialize the start node to have FnInput for all its arguments.
     var fninput_set: cfg_def.Set(cfg_def.SourceState) = .init(gpa);
@@ -125,7 +137,7 @@ pub fn update_block(
                     return ParseError.RecursiveCall;
                 }
                 // Okay, analyze the function and prepare to merge.
-                var annotations = try analyze_function(val.function_name, parsed, callstack, gpa);
+                var annotations = try analyze_function_inner(val.function_name, parsed, callstack, gpa);
                 const func = parsed.functions.getPtr(val.function_name).?;
                 const arg_map = try lists_to_hashmap(cfg_def.CanonicalToken, func.func.decl_params, val.arguments, gpa);
 
