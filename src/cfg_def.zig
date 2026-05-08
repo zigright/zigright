@@ -30,7 +30,7 @@ pub const MemoryOperation = union(enum) {
     },
     FunctionCall: struct {
         function_name: CanonicalToken,
-        arguments: []CanonicalToken,
+        arguments: []const CanonicalToken,
         result: ?CanonicalToken,
     },
     Deallocation: struct {
@@ -174,8 +174,8 @@ pub const BlockFlow = struct {
 };
 
 pub const ParsedFn = struct {
-    start_node: CFGNode,
-    return_node: CFGNode,
+    start_node: *CFGNode,
+    return_node: *CFGNode,
     // The tokens for the arguments in the function prototype, such
     // that I can correlate them back.
     decl_params: []const CanonicalToken,

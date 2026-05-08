@@ -1,5 +1,6 @@
 const std = @import("std");
 const cfg_def = @import("cfg_def.zig");
+const util = @import("util.zig");
 
 pub const ParseError = error{
     UninitVarDeinited,
@@ -33,13 +34,14 @@ fn analyze_function_inner(
     var round_num: u32 = 0;
 
     try callstack.put(name, {});
+    defer _ = callstack.remove(name);
 
     // Initialize the start node to have FnInput for all its arguments.
     var fninput_set: cfg_def.Set(cfg_def.SourceState) = .init(gpa);
     defer fninput_set.deinit();
     try fninput_set.put(.{ .FnInput = {} }, {});
     for (analyzed.func.decl_params) |param| {
-        try start_node.out.sources.put(param, try fninput_set.clone());
+        try start_node.*.out.sources.put(param, try fninput_set.clone());
     }
 
     var changed: bool = true;
@@ -48,13 +50,14 @@ fn analyze_function_inner(
     while (changed) {
         // Perform a depth-first search.
         changed = false;
-        try stack.append(gpa, start_node);
+        try stack.append(gpa, start_node.*);
         while (stack.pop()) |node| {
             // We can skip if it has already been visited this round.
             if (node.round_visited == round_num and node.annotations_initialized) {
                 continue;
             }
-            changed |= try update_block(node, parsed, callstack, gpa);
+            const changed_round = try update_block(node, parsed, callstack, gpa);
+            changed |= changed_round;
             node.round_visited = round_num;
             for (node.nodes_out) |child| {
                 try stack.append(gpa, child);
@@ -62,6 +65,7 @@ fn analyze_function_inner(
         }
         round_num += 1;
     }
+    analyzed.analysis = analyzed.func.return_node.out;
     return &analyzed.func.return_node.out;
 }
 
@@ -270,7 +274,7 @@ pub fn update_block(
     return changed;
 }
 
-fn lists_to_hashmap(
+pub fn lists_to_hashmap(
     comptime T: type,
     from: []const T,
     to: []const T,

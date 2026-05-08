@@ -2,6 +2,7 @@ const std = @import("std");
 const cfg_def = @import("cfg_def.zig");
 const rules = @import("rules.zig");
 const analysis = @import("analysis.zig");
+const util = @import("util.zig");
 const expect = std.testing.expect;
 
 var debug_alloc: std.heap.DebugAllocator(.{}) = .init;
@@ -290,7 +291,7 @@ test "double free" {
     node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
     node3.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
 
-    const parsedFn: cfg_def.ParsedFn = .{ .start_node = start, .return_node = end, .return_tok = null, .decl_params = &[_]u32{7} };
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = &start, .return_node = &end, .return_tok = null, .decl_params = &[_]u32{7} };
     const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
     var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
     try parsed.functions.put(fn_name, analyzedFn);
@@ -335,7 +336,7 @@ test "double alloc without free" {
     node2.mem_op = .{ .Allocation = .{ .allocator = 3, .result = 14 } };
     node3.mem_op = .{ .Deallocation = .{ .allocator = 3, .variable = 14 } };
 
-    const parsedFn: cfg_def.ParsedFn = .{ .start_node = start, .return_node = end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = &start, .return_node = &end, .return_tok = null, .decl_params = &[_]u32{3} };
     const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
     var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
     try parsed.functions.put(fn_name, analyzedFn);
@@ -369,7 +370,7 @@ test "alloc without free or return" {
 
     node1.mem_op = .{ .Allocation = .{ .allocator = 3, .result = 14 } };
 
-    const parsedFn: cfg_def.ParsedFn = .{ .start_node = start, .return_node = end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = &start, .return_node = &end, .return_tok = null, .decl_params = &[_]u32{3} };
     const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
     var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
     try parsed.functions.put(fn_name, analyzedFn);
@@ -421,10 +422,10 @@ test "function call" {
 
     baz_node1.mem_op = .{ .Allocation = .{ .result = 44, .allocator = 31 } };
 
-    const fooParsedFn: cfg_def.ParsedFn = .{ .start_node = foo_start, .return_node = foo_end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const fooParsedFn: cfg_def.ParsedFn = .{ .start_node = &foo_start, .return_node = &foo_end, .return_tok = null, .decl_params = &[_]u32{3} };
     const fooAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = fooParsedFn };
 
-    const bazParsedFn: cfg_def.ParsedFn = .{ .start_node = baz_start, .return_node = baz_end, .return_tok = 44, .decl_params = &[_]u32{31} };
+    const bazParsedFn: cfg_def.ParsedFn = .{ .start_node = &baz_start, .return_node = &baz_end, .return_tok = 44, .decl_params = &[_]u32{31} };
     const bazAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = bazParsedFn };
 
     var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
@@ -439,4 +440,257 @@ test "function call" {
     try expect(alerts.len == 1);
     try expect(alerts[0].kind == .MemoryLeakDrop);
     try expect(alerts[0].variable == 14);
+}
+
+test "function call free" {
+    // fn foo(gpa: std.mem.Allocator) void  {
+    // var bar = gpa.alloc();
+    // baz(bar, gpa);
+    // }
+    //
+    // fn baz(var, gpa: std.mem.Allocator) []u32 {
+    // var.deinit(gpa)
+    // }
+    const foo: u32 = 1;
+    var foo_start = CFGNodeCreate();
+    foo_start.kind = .Start;
+    var foo_node1 = CFGNodeCreate();
+    var foo_node2 = CFGNodeCreate();
+    var foo_end = CFGNodeCreate();
+    foo_end.kind = .Return;
+
+    try connectNodes(&foo_start, &foo_node1);
+    try connectNodes(&foo_node1, &foo_node2);
+    try connectNodes(&foo_node2, &foo_end);
+
+    const baz: u32 = 29;
+    var baz_start = CFGNodeCreate();
+    baz_start.kind = .Start;
+    var baz_node1 = CFGNodeCreate();
+    var baz_end = CFGNodeCreate();
+    baz_end.kind = .Return;
+
+    try connectNodes(&baz_start, &baz_node1);
+    try connectNodes(&baz_node1, &baz_end);
+
+    foo_node1.mem_op = .{ .Allocation = .{ .result = 14, .allocator = 3 } };
+    var args = [_]u32{ 14, 3 };
+    foo_node2.mem_op = .{ .FunctionCall = .{ .result = null, .arguments = &args, .function_name = baz } };
+
+    baz_node1.mem_op = .{ .DeinitExplicit = .{ .variable = 44, .allocator = 31 } };
+
+    const fooParsedFn: cfg_def.ParsedFn = .{ .start_node = &foo_start, .return_node = &foo_end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const fooAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = fooParsedFn };
+
+    const bazParsedFn: cfg_def.ParsedFn = .{ .start_node = &baz_start, .return_node = &baz_end, .return_tok = null, .decl_params = &[_]u32{ 44, 31 } };
+    const bazAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = bazParsedFn };
+
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    try parsed.functions.put(foo, fooAnalyzedFn);
+    try parsed.functions.put(baz, bazAnalyzedFn);
+
+    _ = try rules.analyze_function(foo, &parsed, gpa);
+    const alerts = try analysis.generate_alerts(foo, &parsed, gpa);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
+    try expect(alerts.len == 0);
+}
+
+test "function call free twice" {
+    // fn foo(gpa: std.mem.Allocator) void  {
+    // var bar = gpa.alloc();
+    // baz(bar, gpa);
+    // bar = gpa.alloc();
+    // baz(bar, gpa);
+    // }
+    //
+    // fn baz(var, gpa: std.mem.Allocator) []u32 {
+    // var.deinit(gpa)
+    // }
+    const foo: u32 = 1;
+    var foo_start = CFGNodeCreate();
+    foo_start.kind = .Start;
+    var foo_node1 = CFGNodeCreate();
+    var foo_node2 = CFGNodeCreate();
+    var foo_node3 = CFGNodeCreate();
+    var foo_node4 = CFGNodeCreate();
+    var foo_end = CFGNodeCreate();
+    foo_end.kind = .Return;
+
+    try connectNodes(&foo_start, &foo_node1);
+    try connectNodes(&foo_node1, &foo_node2);
+    try connectNodes(&foo_node2, &foo_node3);
+    try connectNodes(&foo_node3, &foo_node4);
+    try connectNodes(&foo_node4, &foo_end);
+
+    const baz: u32 = 29;
+    var baz_start = CFGNodeCreate();
+    baz_start.kind = .Start;
+    var baz_node1 = CFGNodeCreate();
+    var baz_end = CFGNodeCreate();
+    baz_end.kind = .Return;
+
+    try connectNodes(&baz_start, &baz_node1);
+    try connectNodes(&baz_node1, &baz_end);
+
+    foo_node1.mem_op = .{ .Allocation = .{ .result = 14, .allocator = 3 } };
+    var args = [_]u32{ 14, 3 };
+    foo_node2.mem_op = .{ .FunctionCall = .{ .result = null, .arguments = &args, .function_name = baz } };
+    foo_node3.mem_op = .{ .Allocation = .{ .result = 14, .allocator = 3 } };
+    foo_node4.mem_op = .{ .FunctionCall = .{ .result = null, .arguments = &args, .function_name = baz } };
+
+    baz_node1.mem_op = .{ .DeinitExplicit = .{ .variable = 44, .allocator = 31 } };
+
+    const fooParsedFn: cfg_def.ParsedFn = .{ .start_node = &foo_start, .return_node = &foo_end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const fooAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = fooParsedFn };
+
+    const bazParsedFn: cfg_def.ParsedFn = .{ .start_node = &baz_start, .return_node = &baz_end, .return_tok = null, .decl_params = &[_]u32{ 44, 31 } };
+    const bazAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = bazParsedFn };
+
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    try parsed.functions.put(foo, fooAnalyzedFn);
+    try parsed.functions.put(baz, bazAnalyzedFn);
+
+    _ = try rules.analyze_function(foo, &parsed, gpa);
+    const alerts = try analysis.generate_alerts(foo, &parsed, gpa);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
+
+    try expect(alerts.len == 0);
+}
+
+test "function call free, before alloc" {
+    // fn foo(gpa: std.mem.Allocator) void  {
+    // baz(bar, gpa);
+    // bar = gpa.alloc();
+    // baz(bar, gpa);
+    // }
+    //
+    // fn baz(var, gpa: std.mem.Allocator) []u32 {
+    // var.deinit(gpa)
+    // }
+    const foo: u32 = 1;
+    var foo_start = CFGNodeCreate();
+    foo_start.kind = .Start;
+    var foo_node1 = CFGNodeCreate();
+    var foo_node2 = CFGNodeCreate();
+    var foo_node3 = CFGNodeCreate();
+    var foo_end = CFGNodeCreate();
+    foo_end.kind = .Return;
+
+    var statement1_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(13)};
+    foo_node1.ast_nodes = &statement1_ast;
+    var statement2_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(22)};
+    foo_node2.ast_nodes = &statement2_ast;
+    var statement3_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(30)};
+    foo_node3.ast_nodes = &statement3_ast;
+
+    try connectNodes(&foo_start, &foo_node1);
+    try connectNodes(&foo_node1, &foo_node2);
+    try connectNodes(&foo_node2, &foo_node3);
+    try connectNodes(&foo_node3, &foo_end);
+
+    const baz: u32 = 29;
+    var baz_start = CFGNodeCreate();
+    baz_start.kind = .Start;
+    var baz_node1 = CFGNodeCreate();
+    var baz_end = CFGNodeCreate();
+    baz_end.kind = .Return;
+
+    try connectNodes(&baz_start, &baz_node1);
+    try connectNodes(&baz_node1, &baz_end);
+
+    var args = [_]u32{ 14, 3 };
+    foo_node1.mem_op = .{ .FunctionCall = .{ .result = null, .arguments = &args, .function_name = baz } };
+    foo_node2.mem_op = .{ .Allocation = .{ .result = 14, .allocator = 3 } };
+    foo_node3.mem_op = .{ .FunctionCall = .{ .result = null, .arguments = &args, .function_name = baz } };
+
+    baz_node1.mem_op = .{ .DeinitExplicit = .{ .variable = 44, .allocator = 31 } };
+
+    const fooParsedFn: cfg_def.ParsedFn = .{ .start_node = &foo_start, .return_node = &foo_end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const fooAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = fooParsedFn };
+
+    const bazParsedFn: cfg_def.ParsedFn = .{ .start_node = &baz_start, .return_node = &baz_end, .return_tok = null, .decl_params = &[_]u32{ 44, 31 } };
+    const bazAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = bazParsedFn };
+
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    try parsed.functions.put(foo, fooAnalyzedFn);
+    try parsed.functions.put(baz, bazAnalyzedFn);
+
+    _ = try rules.analyze_function(foo, &parsed, gpa);
+    const alerts = try analysis.generate_alerts(foo, &parsed, gpa);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
+
+    try expect(alerts.len == 1);
+    try expect(alerts[0].kind == .FreeBeforeAlloc);
+    try expect(alerts[0].variable == 14);
+    try expect(alerts[0].location == statement1_ast[0]);
+}
+
+test "cross free" {
+    // fn foo(gpa1: std.mem.Allocator, gpa2: std.mem.Allocator) void  {
+    // bar = gpa1.alloc();
+    // baz(bar, gpa2);
+    // }
+    //
+    // fn baz(var, gpa: std.mem.Allocator) []u32 {
+    // var.deinit(gpa)
+    // }
+    const foo: u32 = 1;
+    var foo_start = CFGNodeCreate();
+    foo_start.kind = .Start;
+    var foo_node1 = CFGNodeCreate();
+    var foo_node2 = CFGNodeCreate();
+    var foo_end = CFGNodeCreate();
+    foo_end.kind = .Return;
+
+    var statement1_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(13)};
+    foo_node1.ast_nodes = &statement1_ast;
+    var statement2_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(22)};
+    foo_node2.ast_nodes = &statement2_ast;
+
+    try connectNodes(&foo_start, &foo_node1);
+    try connectNodes(&foo_node1, &foo_node2);
+    try connectNodes(&foo_node2, &foo_end);
+
+    const baz: u32 = 29;
+    var baz_start = CFGNodeCreate();
+    baz_start.kind = .Start;
+    var baz_node1 = CFGNodeCreate();
+    var baz_end = CFGNodeCreate();
+    baz_end.kind = .Return;
+
+    try connectNodes(&baz_start, &baz_node1);
+    try connectNodes(&baz_node1, &baz_end);
+
+    var args = [_]u32{ 14, 5 };
+    foo_node1.mem_op = .{ .Allocation = .{ .result = 14, .allocator = 3 } };
+    foo_node2.mem_op = .{ .FunctionCall = .{ .result = null, .arguments = &args, .function_name = baz } };
+
+    baz_node1.mem_op = .{ .DeinitExplicit = .{ .variable = 44, .allocator = 31 } };
+
+    const fooParsedFn: cfg_def.ParsedFn = .{ .start_node = &foo_start, .return_node = &foo_end, .return_tok = null, .decl_params = &[_]u32{ 3, 5 } };
+    const fooAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = fooParsedFn };
+
+    const bazParsedFn: cfg_def.ParsedFn = .{ .start_node = &baz_start, .return_node = &baz_end, .return_tok = null, .decl_params = &[_]u32{ 44, 31 } };
+    const bazAnalyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = bazParsedFn };
+
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    try parsed.functions.put(foo, fooAnalyzedFn);
+    try parsed.functions.put(baz, bazAnalyzedFn);
+
+    _ = try rules.analyze_function(foo, &parsed, gpa);
+    const alerts = try analysis.generate_alerts(foo, &parsed, gpa);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
+
+    try expect(alerts.len == 1);
+    try expect(alerts[0].kind == .CrossFree);
+    try expect(alerts[0].variable == 14);
+    try expect(alerts[0].location == statement2_ast[0]);
 }

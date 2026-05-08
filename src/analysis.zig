@@ -1,10 +1,12 @@
 const std = @import("std");
 const cfg = @import("cfg_def.zig");
 const rules = @import("rules.zig");
+const util = @import("util.zig");
 
 pub const AlertKind = enum {
     DoubleFree,
     CrossFree,
+    FreeBeforeAlloc,
     MemoryLeakDrop,
     MemoryLeakClobber,
 };
@@ -28,7 +30,7 @@ pub fn generate_alerts(
 
     var stack: std.ArrayList(*cfg.CFGNode) = .empty;
     defer stack.deinit(gpa);
-    try stack.append(gpa, start_node);
+    try stack.append(gpa, start_node.*);
     while (stack.pop()) |node| {
         // We can skip if it has already been visited this round.
         if (node.round_visited == round_num) {
@@ -45,6 +47,9 @@ pub fn generate_alerts(
                 try append_alert(&alerts, node, varname.*, alert, gpa);
             }
             if (try memory_leak_drop(analyzed.func.return_tok, node, varname.*, gpa)) |alert| {
+                try append_alert(&alerts, node, varname.*, alert, gpa);
+            }
+            if (try cross_free_or_unalloc(node, varname.*, parsed, gpa)) |alert| {
                 try append_alert(&alerts, node, varname.*, alert, gpa);
             }
         }
@@ -82,21 +87,24 @@ fn double_free(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.Pa
             },
             .FunctionCall => |op| swcase: {
                 // All the functions should be analyzed by now.
-                const annotations = parsed.functions.get(op.function_name).?.analysis.?;
-                if (annotations.sinks.get(varname)) |states| {
-                    var collapsed = try collapse(cfg.SinkState, &states, gpa);
-                    defer collapsed.deinit();
-                    // Note: even though FnInput could "contain" non-alloc-ed states in the outer scope,
-                    // we'll always flag it as bad: it means that somebody called var.deinit().
-                    if (collapsed.contains(.{ .Uninit = {} }) or collapsed.contains(.{ .Maybe = 0 })) {
-                        // There might be a path that doesn't free, so skip!
-                        return null;
+                const func = parsed.functions.get(op.function_name).?;
+                const annotations = func.analysis.?;
+                const arg_map = try rules.lists_to_hashmap(cfg.CanonicalToken, op.arguments, func.func.decl_params, gpa);
+                if (arg_map.get(varname)) |translated| {
+                    if (annotations.sinks.get(translated)) |states| {
+                        var collapsed = try collapse(cfg.SinkState, &states, gpa);
+                        defer collapsed.deinit();
+                        // Note: even though FnInput could "contain" non-alloc-ed states in the outer scope,
+                        // we'll always flag it as bad: it means that somebody called var.deinit().
+                        if (collapsed.contains(.{ .Uninit = {} }) or collapsed.contains(.{ .Maybe = 0 })) {
+                            // There might be a path that doesn't free, so skip!
+                            return null;
+                        }
+                        break :swcase varname;
                     }
-                    break :swcase varname;
-                } else {
-                    // If the annotations don't mention this variable, great!
-                    return null;
                 }
+                // If the annotations don't mention this variable, great!
+                return null;
             },
             .Deallocation => |op| op.variable,
             .DeinitExplicit => |op| op.variable,
@@ -123,6 +131,7 @@ fn double_free(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.Pa
 }
 
 // Detects: if this block sets the allocation state of a variable and the allocation state only contains .Alloc = ...
+//          and the sink state only contains .Uninit.
 fn memory_leak_clobber(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.ParsedCFG, gpa: std.mem.Allocator) !?AlertKind {
     if (block.mem_op) |mem_op| {
         // Check: do we certainly allocate the variable in this block?
@@ -130,22 +139,20 @@ fn memory_leak_clobber(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed:
             .Allocation => |val| val.result,
             .FunctionCall => |op| swcase: {
                 // All the functions should be analyzed by now.
-                const annotations = parsed.functions.get(op.function_name).?.analysis.?;
-                if (annotations.sources.get(varname)) |states| {
-                    var collapsed = try collapse(cfg.SourceState, &states, gpa);
-                    defer collapsed.deinit();
-                    // Note: even though FnInput could "contain" non-alloc-ed states in the outer scope,
-                    // we'll always flag it as bad: it means that somebody called var.deinit().
-                    if (collapsed.contains(.{ .Uninit = {} }) or collapsed.contains(.{ .Maybe = 0 })) {
-                        // There might be a path that doesn't allocate, so skip!
-                        // Note that it's not allowed to contain FnInput.
-                        return null;
+                const func = parsed.functions.get(op.function_name).?;
+                const annotations = func.analysis.?;
+                // Only the return value is relevant. Are we the return token?
+                if (op.result != null and func.func.return_tok != null and op.result.? == varname) {
+                    if (annotations.sources.get(func.func.return_tok.?)) |sources| {
+                        var collapsed = try collapse(cfg.SourceState, &sources, gpa);
+                        // Check: is this definitely allocated? It can't be FnInput, because NoPtrAlias.
+                        if (collapsed.count() == 1 and collapsed.contains(.{ .Alloc = 0 })) {
+                            break :swcase varname;
+                        }
                     }
-                    break :swcase varname;
-                } else {
-                    // If the annotations don't mention this variable, great!
-                    return null;
                 }
+                // If the annotations don't mention this variable, great!
+                return null;
             },
             .Deallocation, .DeinitExplicit, .Deinit => {
                 return null;
@@ -161,6 +168,14 @@ fn memory_leak_clobber(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed:
             var collapsed = try collapse(cfg.SourceState, &states, gpa);
             defer collapsed.deinit();
             if (collapsed.count() == 1 and collapsed.contains(.{ .Alloc = 0 })) {
+                // Check: are we perhaps already deallocated?
+                if (block.in.sinks.get(varname)) |sinks| {
+                    // If it is possibly deallocated by anything (that is, if it doesn't just contain .Uninit)
+                    // then we should bail out.
+                    if (sinks.count() > 1 or !sinks.contains(.{ .Uninit = {} })) {
+                        return null;
+                    }
+                }
                 // Okay. So here we are. A variable is definitely allocated, and it is also definitely already allocated.
                 return .MemoryLeakClobber;
             }
@@ -199,25 +214,94 @@ fn memory_leak_drop(ret_token: ?cfg.CanonicalToken, block: *cfg.CFGNode, varname
 }
 
 // Detects: if this block frees this variable with an allocator that does not appear in the variable's allocation state.
-// fn cross_free(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.ParsedCFG, gpa: std.mem.Allocator) !?AlertKind {
-//     if (block.mem_op) |mem_op| {
-//         // Check: is this certainly de
-//         switch (mem_op) {
-//             // Allocations can't dealloc, and bare .deinit() cannot cross-free.
-//             .Allocation,
-//             .Deinit,
-//             => {
-//                 return null;
-//             },
-//             .Deallocation => |val| val.variable,
-//             .DeinitExplicit => |val| val.variable,
-//             .FunctionCall => |op| fn_call: {
-//                 // All the functions should be analyzed by now.
-//                 const annotations = parsed.functions.get(op.function_name).?.analysis.?;
-//             },
-//         }
-//     }
-// }
+fn cross_free_or_unalloc(block: *cfg.CFGNode, varname: cfg.CanonicalToken, parsed: *cfg.ParsedCFG, gpa: std.mem.Allocator) !?AlertKind {
+    if (block.mem_op) |mem_op| {
+        // Check: is this certainly deallocated here?
+        const affected = switch (mem_op) {
+            // Allocations can't dealloc, and bare .deinit() cannot cross-free.
+            .Allocation => {
+                return null;
+            },
+            .Deinit,
+            => {
+                if (block.in.sources.contains(varname)) {
+                    return null;
+                } else {
+                    return .FreeBeforeAlloc;
+                }
+            },
+            .Deallocation => |val| val.variable,
+            .DeinitExplicit => |val| val.variable,
+            .FunctionCall => |op| fn_call: {
+                // All the functions should be analyzed by now.
+                const func = parsed.functions.get(op.function_name).?;
+                const annotations = func.analysis.?;
+                const arg_map = try rules.lists_to_hashmap(cfg.CanonicalToken, op.arguments, func.func.decl_params, gpa);
+                if (arg_map.get(varname)) |translated| {
+                    if (annotations.sinks.get(translated)) |states| {
+                        var collapsed = try collapse(cfg.SinkState, &states, gpa);
+                        defer collapsed.deinit();
+                        // Note: even though FnInput could "contain" non-alloc-ed states in the outer scope,
+                        // we'll always flag it as bad: it means that somebody called var.deinit().
+                        if (collapsed.contains(.{ .Uninit = {} }) or collapsed.contains(.{ .Maybe = 0 })) {
+                            // There might be a path that doesn't free, so skip!
+                            return null;
+                        }
+                        break :fn_call varname;
+                    }
+                }
+                // If the annotations don't mention this variable, it wasn't deallocated!
+                return null;
+            },
+        };
+        if (affected != varname) {
+            // Ah, the deallocated variable is a different one.
+            return null;
+        }
+
+        // we are now certain that this variable was freed in this block.
+        // Track which allocators it is freed with in this step.
+        var referenced_gpas: cfg.Set(cfg.CanonicalToken) = .init(gpa);
+        // If we got to this point, the last step's free state will certainly be clobbered.
+        // so don't worry about picking up irrelevant ones.
+        var sink_it = block.out.sinks.get(varname).?.keyIterator();
+        while (sink_it.next()) |sink| {
+            try referenced_gpas.put(switch (sink.*) {
+                .FnInput => {
+                    // If this exists, we could only have a free before alloc.
+                    // It must have been deinited inside a function to which
+                    // it was passed as an argument.
+                    if (block.in.sources.contains(varname)) {
+                        return null;
+                    } else {
+                        return .FreeBeforeAlloc;
+                    }
+                },
+                .Dealloc => |val| val,
+                .Uninit => {
+                    // This shouldn't be possible at this point.
+                    unreachable;
+                },
+                .Maybe => |val| val,
+            }, {});
+        }
+
+        if (block.in.sources.get(varname)) |sources| {
+            var gpa_it = referenced_gpas.keyIterator();
+            while (gpa_it.next()) |alloc| {
+                if (sources.contains(.{ .Alloc = alloc.* }) or sources.contains(.{ .Maybe = alloc.* })) {
+                    // It is possible that this isn't a cross-free.
+                    return null;
+                }
+            }
+            return .CrossFree;
+        } else {
+            // If there are no allocators and we are sure that it was freed, error out.
+            return .FreeBeforeAlloc;
+        }
+    }
+    return null;
+}
 
 // Collapse down to the "types" of things
 fn collapse(comptime T: type, set: *const cfg.Set(T), gpa: std.mem.Allocator) !cfg.Set(T) {

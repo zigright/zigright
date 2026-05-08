@@ -38,3 +38,4 @@ setting sink[var] = gpa when source[var] doesn't contain Alloc(gpa) or Maybe(gpa
 
 accessing var when sink[var] only contains Dealloc(...)
     ==> Use after free
+^not implemented, but could be.
