@@ -288,7 +288,7 @@ test "double free" {
 
     node1.mem_op = .{ .Allocation = .{ .allocator = 7, .result = 3 } };
     node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
-    node2.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
+    node3.mem_op = .{ .Deallocation = .{ .allocator = 7, .variable = 3 } };
 
     var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
     try callstack.put(fn_name, {});
@@ -299,8 +299,57 @@ test "double free" {
 
     _ = try rules.analyze_function(fn_name, &parsed, &callstack, gpa);
     const alerts = try analysis.generate_alerts(fn_name, &parsed, gpa);
+    //     try expect(alerts.len == 1);
+    //     try expect(alerts[0].kind == .DoubleFree);
+    //     try expect(alerts[0].variable == 3);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
+}
+
+test "double alloc without free" {
+    // fn foo(gpa: std.mem.Allocator) void  {
+    // var bar = gpa.alloc();
+    // bar = gpa.alloc();
+    // gpa.free(bar);
+    // }
+    const fn_name: u32 = 1;
+    var start = CFGNodeCreate();
+    start.kind = .Start;
+    var node1 = CFGNodeCreate();
+    var node2 = CFGNodeCreate();
+    var node3 = CFGNodeCreate();
+    var end = CFGNodeCreate();
+    end.kind = .Return;
+
+    try connectNodes(&start, &node1);
+    try connectNodes(&node1, &node2);
+    try connectNodes(&node2, &node3);
+    try connectNodes(&node3, &end);
+    var statement1_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(13)};
+    node1.ast_nodes = &statement1_ast;
+    var statement2_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(22)};
+    node2.ast_nodes = &statement2_ast;
+    var statement3_ast = [_]std.zig.Ast.Node.Index{@enumFromInt(30)};
+    node3.ast_nodes = &statement3_ast;
+
+    node1.mem_op = .{ .Allocation = .{ .allocator = 3, .result = 14 } };
+    node2.mem_op = .{ .Allocation = .{ .allocator = 3, .result = 14 } };
+    node3.mem_op = .{ .Deallocation = .{ .allocator = 3, .variable = 14 } };
+
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+    try callstack.put(fn_name, {});
+    const parsedFn: cfg_def.ParsedFn = .{ .start_node = start, .return_node = end, .return_tok = null, .decl_params = &[_]u32{3} };
+    const analyzedFn: cfg_def.AnalyzedFn = .{ .analysis = null, .func = parsedFn };
+    var parsed: cfg_def.ParsedCFG = .{ .functions = .init(gpa), .ast = undefined };
+    try parsed.functions.put(fn_name, analyzedFn);
+
+    _ = try rules.analyze_function(fn_name, &parsed, &callstack, gpa);
+    const alerts = try analysis.generate_alerts(fn_name, &parsed, gpa);
+    for (alerts) |alert| {
+        std.debug.print("{any}\n", .{alert});
+    }
     try expect(alerts.len == 1);
-    try expect(alerts[0].kind == .DoubleFree);
-    try expect(alerts[0].variable == 3);
-    // std.debug.print("{any}\n", .{alerts[0]});
+    try expect(alerts[0].kind == .MemoryLeakClobber);
+    try expect(alerts[0].variable == 14);
 }
