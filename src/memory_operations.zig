@@ -273,6 +273,11 @@ test "deinitExplicit" {
 }
 
 test "double free" {
+    // fn foo(gpa: std.mem.Allocator) void  {
+    // var bar = gpa.alloc();
+    // gpa.free(bar);
+    // gpa.free(bar);
+    // }
     const fn_name: u32 = 1;
     var start = CFGNodeCreate();
     start.kind = .Start;
