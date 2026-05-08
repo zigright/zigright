@@ -125,3 +125,106 @@ test "deallocation" {
     changed = try rules.update_block(&child, &parsed, &callstack, gpa);
     try expect(!changed);
 }
+
+fn CFGNodeCreate() cfg_def.CFGNode {
+    var ret: cfg_def.CFGNode = .init(gpa);
+    ret.ast_nodes = &[_]std.zig.Ast.Node.Index{};
+    ret.nodes_in = &[_]*cfg_def.CFGNode{};
+    ret.nodes_out = &[_]*cfg_def.CFGNode{};
+    return ret;
+}
+
+fn addChild(target: *cfg_def.CFGNode, childToBeAdded: *cfg_def.CFGNode) !void {
+    if (target.nodes_out.len > 0) {
+        var nodes_out = try gpa.alloc(*cfg_def.CFGNode, target.nodes_out.len + 1);
+        @memcpy(nodes_out, target.nodes_out);
+        nodes_out[target.nodes_out.len] = childToBeAdded;
+        gpa.free(target.nodes_out);
+        target.nodes_out = nodes_out;
+        return;
+    } else {
+        var nodes_out = try gpa.alloc(*cfg_def.CFGNode, 1);
+        nodes_out[target.nodes_out.len] = childToBeAdded;
+        target.nodes_out = nodes_out;
+        return;
+    }
+}
+
+fn addParent(target: *cfg_def.CFGNode, parentToBeAdded: *cfg_def.CFGNode) !void {
+    if (target.nodes_in.len > 0) {
+        var nodes_in = try gpa.alloc(*cfg_def.CFGNode, target.nodes_in.len + 1);
+        @memcpy(nodes_in, target.nodes_in);
+        nodes_in[target.nodes_in.len] = parentToBeAdded;
+        gpa.free(target.nodes_in);
+        target.nodes_in = nodes_in;
+        return;
+    } else {
+        var nodes_in = try gpa.alloc(*cfg_def.CFGNode, 1);
+        nodes_in[target.nodes_in.len] = parentToBeAdded;
+        target.nodes_in = nodes_in;
+        return;
+    }
+}
+
+fn connectNodes(predecessor: *cfg_def.CFGNode, successor: *cfg_def.CFGNode) !void {
+    try addChild(predecessor, successor);
+    try addParent(successor, predecessor);
+}
+
+test "deinit" {
+    //
+    // fn foo(v: anytype, gpa: std.mem.Allocator) void {
+    // v.init(gpa);
+    // v.deinit();
+    // v = v + 1;
+    // }
+    // Two nodes, check if dealloc propagates
+    var node1 = CFGNodeCreate();
+    var node2 = CFGNodeCreate();
+    var node3 = CFGNodeCreate();
+
+    defer {
+        node1.deinit();
+        node2.deinit();
+        node3.deinit();
+    }
+
+    try connectNodes(&node1, &node2);
+    try connectNodes(&node2, &node3);
+
+    node1.mem_op = .{ .Allocation = .{ .allocator = 7, .result = 3 } };
+    node2.mem_op = .{ .Deinit = .{ .variable = 3 } };
+
+    // Dummy vars to satisfy the function signature
+    var parsed: cfg_def.ParsedCFG = undefined;
+    var callstack: cfg_def.Set(cfg_def.CanonicalToken) = .init(gpa);
+
+    // These should be null as we didn't initialize anything
+    try expect(node1.in.sinks.get(3) == null);
+    try expect(node1.out.sinks.get(3) == null);
+    try expect(node1.in.sources.get(3) == null);
+    try expect(node1.out.sources.get(3) == null);
+
+    var changed = try rules.update_block(&node1, &parsed, &callstack, gpa);
+    try expect(changed);
+    try expect(node1.in.sinks.get(3) == null);
+    // Source should change
+    try expect(node1.out.sources.get(3).?.contains(.{ .Alloc = 7 }) and node1.out.sinks.get(3).?.count() == 1);
+
+    try expect(node2.in.sinks.get(3) == null);
+    try expect(node2.out.sinks.get(3) == null);
+    changed = try rules.update_block(&node2, &parsed, &callstack, gpa);
+    try expect(changed);
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node1.out.sources, &node2.in.sources));
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.in.sources, &node2.out.sources));
+    // Update sink
+    try expect(node2.out.sinks.get(3).?.contains(.{ .Dealloc = 7 }) and node2.out.sinks.get(3).?.count() == 1);
+
+    changed = try rules.update_block(&node3, &parsed, &callstack, gpa);
+    try expect(changed);
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node2.out.sources, &node3.in.sources));
+    try expect(cfg_def.recursive_eq(cfg_def.SourceState, &node3.in.sources, &node3.out.sources));
+
+    try expect(cfg_def.recursive_eq(cfg_def.SinkState, &node2.out.sinks, &node3.in.sinks));
+    try expect(cfg_def.recursive_eq(cfg_def.SinkState, &node3.in.sinks, &node3.out.sinks));
+}
