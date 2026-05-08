@@ -82,13 +82,8 @@ pub fn main(init: std.process.Init) !void {
         for (vars) |v| {
             std.debug.print("{s} {s}\n", .{ functions.getFunctionName(&ast, i), variables.getVariableName(&ast, v) });
         }
-        // const params = try functions.getFunctionParamsWithType(ast, i, gpa);
-        // var iter = params.iterator();
-        // std.debug.print("{s}:\n", .{functions.getFunctionName(ast, i)});
-        // while (iter.next()) |param| {
-        //     std.debug.print("\t{s}:{s}\n", .{ param.key_ptr.*, param.value_ptr.* });
-        // }
     }
+
     try stdout.flush();
 
     std.process.exit(0);
